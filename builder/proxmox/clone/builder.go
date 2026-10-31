@@ -54,7 +54,7 @@ func (b *Builder) Run(ctx context.Context, ui packersdk.Ui, hook packersdk.Hook)
 
 type cloneVMCreator struct{}
 
-func (*cloneVMCreator) Create(vmRef *proxmoxapi.VmRef, vmConfig proxmoxapi.ConfigQemu, state multistep.StateBag) error {
+func (*cloneVMCreator) Create(ctx context.Context, vmRef *proxmoxapi.VmRef, vmConfig proxmoxapi.ConfigQemu, state multistep.StateBag) error {
 	client := state.Get("proxmoxClient").(*proxmoxapi.Client)
 	c := state.Get("clone-config").(*Config)
 	comm := state.Get("config").(*proxmox.Config).Comm
@@ -145,7 +145,7 @@ func (*cloneVMCreator) Create(vmRef *proxmoxapi.VmRef, vmConfig proxmoxapi.Confi
 
 	if c.CloudInitDisableUpgradePackages != config.TriUnset {
 		// Cloud-Init `Upgrade Packages` not available in versions lower than 8
-		proxmoxVersion, err := client.Version()
+		proxmoxVersion, err := client.Version(ctx)
 		if err != nil {
 			err := fmt.Errorf("error fetching backend version: %s", err)
 			state.Put("error", err)
@@ -171,7 +171,7 @@ func (*cloneVMCreator) Create(vmRef *proxmoxapi.VmRef, vmConfig proxmoxapi.Confi
 
 	var sourceVmr *proxmoxapi.VmRef
 	if c.CloneVM != "" {
-		sourceVmrs, err := client.GetVmRefsByName(c.CloneVM)
+		sourceVmrs, err := client.GetVmRefsByName(ctx, c.CloneVM)
 		if err != nil {
 			return err
 		}
@@ -185,17 +185,17 @@ func (*cloneVMCreator) Create(vmRef *proxmoxapi.VmRef, vmConfig proxmoxapi.Confi
 		}
 	} else if c.CloneVMID != 0 {
 		sourceVmr = proxmoxapi.NewVmRef(c.CloneVMID)
-		err := client.CheckVmRef(sourceVmr)
+		err := client.CheckVmRef(ctx, sourceVmr)
 		if err != nil {
 			return err
 		}
 	}
 
-	err := vmConfig.CloneVm(sourceVmr, vmRef, client)
+	err := vmConfig.CloneVm(ctx, sourceVmr, vmRef, client)
 	if err != nil {
 		return err
 	}
-	_, err = vmConfig.Update(false, vmRef, client)
+	_, err = vmConfig.Update(ctx, false, vmRef, client)
 	if err != nil {
 		return err
 	}

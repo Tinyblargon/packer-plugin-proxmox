@@ -20,10 +20,10 @@ type startedVMCleanerMock struct {
 	deleteVm func() (string, error)
 }
 
-func (m startedVMCleanerMock) StopVm(*proxmox.VmRef) (string, error) {
+func (m startedVMCleanerMock) StopVm(context.Context, *proxmox.VmRef) (string, error) {
 	return m.stopVm()
 }
-func (m startedVMCleanerMock) DeleteVm(*proxmox.VmRef) (string, error) {
+func (m startedVMCleanerMock) DeleteVm(context.Context, *proxmox.VmRef) (string, error) {
 	return m.deleteVm()
 }
 
@@ -126,7 +126,7 @@ type startVMMock struct {
 	deleteVm    func(vmr *proxmox.VmRef) (exitStatus string, err error)
 }
 
-func (m *startVMMock) Create(vmRef *proxmox.VmRef, config proxmox.ConfigQemu, state multistep.StateBag) error {
+func (m *startVMMock) Create(_ context.Context, vmRef *proxmox.VmRef, config proxmox.ConfigQemu, state multistep.StateBag) error {
 	return m.create(vmRef, config, state)
 }
 func (m *startVMMock) StartVm(vmRef *proxmox.VmRef) (string, error) {
@@ -507,12 +507,14 @@ func TestStartVM_AssertInitialQuemuConfig(t *testing.T) {
 			config: &Config{
 				PCIDevices: []pciDeviceConfig{
 					{
+						Host:       "0000:00:1f.0",
 						HideROMBAR: false,
 					},
 				},
 			},
 			assertQemuConfig: func(t *testing.T, config proxmox.ConfigQemu) {
-				assert.Equal(t, "true", config.QemuPCIDevices[0]["rombar"])
+				assert.Equal(t, "0000:00:1f.0", config.PciDevices[0].Raw.ID.String())
+				assert.Equal(t, true, *config.PciDevices[0].Raw.ROMbar)
 			},
 		},
 	}

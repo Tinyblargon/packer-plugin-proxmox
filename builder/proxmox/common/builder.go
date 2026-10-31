@@ -37,7 +37,7 @@ type Builder struct {
 
 func (b *Builder) Run(ctx context.Context, ui packersdk.Ui, hook packersdk.Hook, state multistep.StateBag) (packersdk.Artifact, error) {
 	var err error
-	b.proxmoxClient, err = newProxmoxClient(b.config)
+	b.proxmoxClient, err = newProxmoxClient(ctx, b.config)
 	if err != nil {
 		return nil, err
 	}
@@ -54,6 +54,7 @@ func (b *Builder) Run(ctx context.Context, ui packersdk.Ui, hook packersdk.Hook,
 	coreSteps := []multistep.Step{
 		&stepStartVM{
 			vmCreator: b.vmCreator,
+			ctx:       ctx,
 		},
 		commonsteps.HTTPServerFromHTTPConfig(&b.config.HTTPConfig),
 		&stepTypeBootCommand{
@@ -99,6 +100,7 @@ func (b *Builder) Run(ctx context.Context, ui packersdk.Ui, hook packersdk.Hook,
 				},
 				&stepUploadISO{
 					ISO: &b.config.ISOs[idx],
+					ctx: ctx,
 				},
 			)
 		}
@@ -157,7 +159,7 @@ func getVMIP(state multistep.StateBag) (string, error) {
 	config := state.Get("config").(*Config)
 	vmRef := state.Get("vmRef").(*proxmox.VmRef)
 
-	ifs, err := client.GetVmAgentNetworkInterfaces(vmRef)
+	ifs, err := client.GetVmAgentNetworkInterfaces(context.Background(), vmRef)
 	if err != nil {
 		return "", err
 	}
