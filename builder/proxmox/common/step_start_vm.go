@@ -878,10 +878,6 @@ func setDeviceParamIfDefined(dev proxmox.QemuDevice, key, value string) {
 	}
 }
 
-func isDuplicateIDError(err error) bool {
-	return strings.Contains(err.Error(), "already exists")
-}
-
 type startedVMCleaner interface {
 	StopVm(context.Context, *proxmox.VmRef) (string, error)
 	DeleteVm(context.Context, *proxmox.VmRef) (string, error)

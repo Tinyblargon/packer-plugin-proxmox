@@ -155,41 +155,41 @@ func commHost(host string) func(state multistep.StateBag) (string, error) {
 // Reads the first non-loopback interface's IP address from the VM.
 // qemu-guest-agent package must be installed on the VM
 func getVMIP(state multistep.StateBag) (string, error) {
-	client := state.Get("proxmoxClient").(*proxmox.Client)
+	client := state.Get("proxmoxClient").(*proxmox.Client).New()
 	config := state.Get("config").(*Config)
 	vmRef := state.Get("vmRef").(*proxmox.VmRef)
 
-	ifs, err := client.GetVmAgentNetworkInterfaces(context.Background(), vmRef)
+	rawAdapters, _, err := client.QemuAgent.NetworkInterfaces(context.Background(), *vmRef)
 	if err != nil {
 		return "", err
 	}
 
 	if config.VMInterface != "" {
-		for _, iface := range ifs {
-			if config.VMInterface != iface.Name {
+		rawAdapter, ok := rawAdapters.SelectName(config.VMInterface)
+		if !ok {
+			return "", fmt.Errorf("interface %s not found in VM", config.VMInterface)
+		}
+		addresses := rawAdapter.GetIpAddresses()
+		for i := range addresses {
+			if addresses[i].IsLoopback() {
 				continue
 			}
-
-			for _, addr := range iface.IpAddresses {
-				if addr.IsLoopback() {
-					continue
-				}
-				return addr.String(), nil
-			}
-			return "", fmt.Errorf("Interface %s only has loopback addresses", config.VMInterface)
+			return addresses[i].String(), nil
 		}
-		return "", fmt.Errorf("Interface %s not found in VM", config.VMInterface)
+		return "", fmt.Errorf("interface %s only has loopback addresses", config.VMInterface)
 	}
 
-	for _, iface := range ifs {
-		for _, addr := range iface.IpAddresses {
-			if addr.IsLoopback() {
+	// Try to find the first non loopback ipv4 address
+	adapters := rawAdapters.Get()
+	for i := range adapters {
+		for ii := range adapters[i].IpAddresses {
+			if adapters[i].IpAddresses[ii].IsLoopback() {
 				continue
 			}
-			if addr.To4() == nil {
+			if adapters[i].IpAddresses[ii].To4() == nil {
 				continue
 			}
-			return addr.String(), nil
+			return adapters[i].IpAddresses[ii].String(), nil
 		}
 	}
 
