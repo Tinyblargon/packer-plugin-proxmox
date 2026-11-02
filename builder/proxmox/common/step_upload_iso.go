@@ -82,7 +82,7 @@ func (s *stepUploadISO) Run(ctx context.Context, state multistep.StateBag) multi
 
 	isoStoragePath := fmt.Sprintf("%s:iso/%s", s.ISO.ISOStoragePool, filename)
 	s.ISO.ISOFile = isoStoragePath
-	ui.Message(fmt.Sprintf("Uploaded ISO to %s", isoStoragePath))
+	ui.Sayf("Uploaded ISO to %s", isoStoragePath)
 
 	return multistep.ActionContinue
 }
@@ -109,6 +109,6 @@ func (s *stepUploadISO) Cleanup(state multistep.StateBag) {
 			ui.Error(fmt.Sprintf("delete volume failed: %s", err.Error()))
 			return
 		}
-		ui.Message(fmt.Sprintf("Deleted generated ISO from %s", s.ISO.ISOFile))
+		ui.Sayf("Deleted generated ISO from %s", s.ISO.ISOFile)
 	}
 }

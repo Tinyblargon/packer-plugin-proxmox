@@ -63,7 +63,7 @@ func newProxmoxClient(ctx context.Context, config Config) (*proxmox.Client, erro
 
 type logger struct{}
 
-func (_ *logger) Write(data []byte) (n int, err error) {
+func (*logger) Write(data []byte) (n int, err error) {
 	log.Println(string(data))
 	return len(data), nil
 }
