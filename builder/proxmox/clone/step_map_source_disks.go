@@ -24,7 +24,7 @@ type StepMapSourceDisks struct{}
 
 type cloneSource interface {
 	GetVmConfig(context.Context, *proxmoxapi.VmRef) (map[string]interface{}, error)
-	GetVmRefsByName(context.Context, string) ([]*proxmoxapi.VmRef, error)
+	GetVmRefsByName(context.Context, proxmoxapi.GuestName) ([]*proxmoxapi.VmRef, error)
 	CheckVmRef(context.Context, *proxmoxapi.VmRef) error
 }
 
@@ -37,7 +37,7 @@ func (s *StepMapSourceDisks) Run(ctx context.Context, state multistep.StateBag) 
 
 	var sourceVmr *proxmoxapi.VmRef
 	if c.CloneVM != "" {
-		sourceVmrs, err := client.GetVmRefsByName(ctx, c.CloneVM)
+		sourceVmrs, err := client.GetVmRefsByName(ctx, proxmoxapi.GuestName(c.CloneVM))
 		if err != nil {
 			state.Put("error", fmt.Errorf("Could not retrieve VM: %s", err))
 			return multistep.ActionHalt
@@ -45,12 +45,12 @@ func (s *StepMapSourceDisks) Run(ctx context.Context, state multistep.StateBag) 
 		// prefer source Vm located on same node
 		sourceVmr = sourceVmrs[0]
 		for _, candVmr := range sourceVmrs {
-			if candVmr.Node() == c.Node {
+			if candVmr.Node() == proxmoxapi.NodeName(c.Node) {
 				sourceVmr = candVmr
 			}
 		}
 	} else if c.CloneVMID != 0 {
-		sourceVmr = proxmoxapi.NewVmRef(c.CloneVMID)
+		sourceVmr = proxmoxapi.NewVmRef(proxmoxapi.GuestID(c.CloneVMID))
 		err := client.CheckVmRef(ctx, sourceVmr)
 		if err != nil {
 			state.Put("error", fmt.Errorf("Could not retrieve VM: %s", err))
@@ -58,7 +58,7 @@ func (s *StepMapSourceDisks) Run(ctx context.Context, state multistep.StateBag) 
 		}
 	}
 
-	vmParams, err := client.GetVmConfig(ctx,sourceVmr)
+	vmParams, err := client.GetVmConfig(ctx, sourceVmr)
 	if err != nil {
 		err := fmt.Errorf("error fetching template config: %s", err)
 		state.Put("error", err)

@@ -51,6 +51,6 @@ func (a *Artifact) State(name string) interface{} {
 
 func (a *Artifact) Destroy() error {
 	log.Printf("Destroying %s: %d", a.artifactType, a.artifactID)
-	_, err := a.proxmoxClient.DeleteVm(a.ctx, proxmox.NewVmRef(a.artifactID))
+	_, err := a.proxmoxClient.New().Guest.Delete(a.ctx, *proxmox.NewVmRef(proxmox.GuestID(a.artifactID)))
 	return err
 }

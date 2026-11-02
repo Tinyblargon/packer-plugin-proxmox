@@ -73,7 +73,7 @@ func (s *stepUploadISO) Run(ctx context.Context, state multistep.StateBag) multi
 	}
 
 	filename := filepath.Base(isoPath)
-	err = client.Upload(ctx,c.Node, s.ISO.ISOStoragePool, "iso", filename, r)
+	err = client.Upload(ctx, c.Node, s.ISO.ISOStoragePool, "iso", filename, r)
 	if err != nil {
 		state.Put("error", err)
 		ui.Error(err.Error())
@@ -101,7 +101,7 @@ func (s *stepUploadISO) Cleanup(state multistep.StateBag) {
 		// Fake a VM reference, DeleteVolume just needs the node to be valid
 		vmRef := &proxmoxapi.VmRef{}
 		vmRef.SetNode(c.Node)
-		vmRef.SetVmType("qemu")
+		vmRef.SetVmType(proxmoxapi.GuestQemu)
 
 		_, err := client.DeleteVolume(s.ctx, vmRef, s.ISO.ISOStoragePool, s.ISO.ISOFile)
 		if err != nil {
