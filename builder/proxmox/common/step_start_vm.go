@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Telmate/proxmox-api-go/proxmox"
 	"github.com/hashicorp/packer-plugin-sdk/multistep"
@@ -29,7 +30,7 @@ type stepStartVM struct {
 }
 
 type ProxmoxVMCreator interface {
-	Create(context.Context, *proxmox.VmRef, proxmox.ConfigQemu, multistep.StateBag) error
+	Create(context.Context, proxmox.ConfigQemu, multistep.StateBag) (*proxmox.VmRef, error)
 }
 type vmStarter interface {
 	CheckVmRef(vmr *proxmox.VmRef) (err error)
@@ -53,7 +54,7 @@ func getExistingTemplate(c *Config, client vmStarter) (*proxmox.VmRef, error) {
 	vmRef := &proxmox.VmRef{}
 	if c.VMID > 0 {
 		log.Printf("looking up VM with ID %d", c.VMID)
-		vmRef = proxmox.NewVmRef(c.VMID)
+		vmRef = proxmox.NewVmRef(proxmox.GuestID(c.VMID))
 		err := client.CheckVmRef(vmRef)
 		if err != nil {
 			// expect an error if no VM is found
@@ -87,7 +88,7 @@ func getExistingTemplate(c *Config, client vmStarter) (*proxmox.VmRef, error) {
 			return &proxmox.VmRef{}, err
 		}
 		if len(vmRefs) > 1 {
-			vmIDs := []int{}
+			vmIDs := []proxmox.GuestID{}
 			for _, vmr := range vmRefs {
 				vmIDs = append(vmIDs, vmr.VmId())
 			}
@@ -143,11 +144,12 @@ func (s *stepStartVM) Run(ctx context.Context, state multistep.StateBag) multist
 	var description = "Packer ephemeral build VM"
 
 	config := proxmox.ConfigQemu{
-		Name:    c.VMName,
+		Node:    new(proxmox.NodeName(c.Node)),
+		Name:    new(proxmox.GuestName(c.VMName)),
 		Agent:   generateAgentConfig(c.Agent),
 		QemuKVM: &kvm,
 		Tags:    generateTags(c.Tags),
-		Boot:    c.Boot, // Boot priority, example: "order=virtio0;ide2;net0", virtio0:Disk0 -> ide0:CDROM -> net0:Network
+		Boot:    generateBoot(c.Boot),
 		CPU: &proxmox.QemuCPU{
 			Cores:   (*proxmox.QemuCpuCores)(&c.Cores),
 			Sockets: (*proxmox.QemuCpuSockets)(&c.Sockets),
@@ -158,21 +160,21 @@ func (s *stepStartVM) Run(ctx context.Context, state multistep.StateBag) multist
 		Memory: &proxmox.QemuMemory{
 			CapacityMiB: (*proxmox.QemuMemoryCapacity)(&c.Memory),
 		},
-		QemuOs:     c.OS,
-		Bios:       c.BIOS,
-		EFIDisk:    generateProxmoxEfi(c.EFIConfig),
-		Machine:    c.Machine,
-		RNGDrive:   generateProxmoxRng0(c.Rng0),
-		TPM:        generateProxmoxTpm(c.TPMConfig),
-		QemuVga:    generateProxmoxVga(c.VGA),
-		Networks:   nics,
-		Disks:      disks,
-		PciDevices: generateProxmoxPCIDeviceMap(c.PCIDevices),
-		Serials:    generateProxmoxSerials(c.Serials),
-		Scsihw:     c.SCSIController,
-		Onboot:     &c.Onboot,
-		Args:       c.AdditionalArgs,
-		Pool:       (*proxmox.PoolName)(&c.Pool),
+		QemuOs:           c.OS,
+		Bios:             c.BIOS,
+		EfiDisk:          generateProxmoxEfi(c.EFIConfig),
+		Machine:          c.Machine,
+		RandomnessDevice: generateProxmoxRng0(c.Rng0),
+		TPM:              generateProxmoxTpm(c.TPMConfig),
+		QemuVga:          generateProxmoxVga(c.VGA),
+		Networks:         nics,
+		Disks:            disks,
+		PciDevices:       generateProxmoxPCIDeviceMap(c.PCIDevices),
+		Serials:          generateProxmoxSerials(c.Serials),
+		Scsihw:           c.SCSIController,
+		StartAtNodeBoot:  &c.Onboot,
+		Args:             c.AdditionalArgs,
+		Pool:             (*proxmox.PoolName)(&c.Pool),
 	}
 
 	// 0 disables the ballooning device, which is useful for all VMs
@@ -222,68 +224,33 @@ func (s *stepStartVM) Run(ctx context.Context, state multistep.StateBag) multist
 	}
 
 	ui.Say("Creating VM")
-	var vmRef *proxmox.VmRef
-	for i := 1; ; i++ {
-		id := c.VMID
-		if id == 0 {
-			ui.Say("No VM ID given, getting next free from Proxmox")
-			genID, err := client.GetNextID(0)
-			if err != nil {
-				state.Put("error", err)
-				ui.Error(err.Error())
-				return multistep.ActionHalt
-			}
-			id = genID
-			config.VmID = genID
-		}
-		vmRef = proxmox.NewVmRef(id)
-		vmRef.SetNode(c.Node)
-		if c.Pool != "" {
-			vmRef.SetPool(c.Pool)
-		}
-
-		err := s.vmCreator.Create(ctx, vmRef, config, state)
-		if err == nil {
-			break
-		}
-
-		// If there's no explicitly configured VMID, and the error is caused
-		// by a race condition in someone else using the ID we just got
-		// generated, we'll retry up to maxDuplicateIDRetries times.
-		if c.VMID == 0 && isDuplicateIDError(err) && i < maxDuplicateIDRetries {
-			ui.Say("Generated VM ID was already allocated, retrying")
-			continue
-		}
+	if c.VMID == 0 {
+		ui.Say("No VM ID given, getting next free from Proxmox")
+	} else {
+		config.ID = new(proxmox.GuestID(c.VMID))
+	}
+	if c.Pool != "" {
+		config.Pool = new(proxmox.PoolName(c.Pool))
+	}
+	// The original race condition is fixed.
+	vmr, err := s.vmCreator.Create(ctx, config, state)
+	if err != nil {
 		err = fmt.Errorf("Error creating VM: %s", err)
 		state.Put("error", err)
 		ui.Error(err.Error())
 		return multistep.ActionHalt
 	}
 
-	// The EFI disk doesn't get created reliably when using the clone builder,
-	// so let's make sure it's there.
-	if c.EFIConfig != (efiConfig{}) && c.Ctx.BuildType == "proxmox-clone" {
-		addEFIConfig := make(map[string]interface{})
-		config.CreateQemuEfiParams(addEFIConfig)
-		_, err := client.SetVmConfig(vmRef, addEFIConfig)
-		if err != nil {
-			err := fmt.Errorf("error updating template: %s", err)
-			state.Put("error", err)
-			ui.Error(err.Error())
-			return multistep.ActionHalt
-		}
-	}
-
 	// Store the vm id for later
-	state.Put("vmRef", vmRef)
+	state.Put("vmRef", vmr)
 	// instance_id is the generic term used so that users can have access to the
 	// instance id inside of the provisioners, used in step_provision.
 	// Note that this is just the VMID, we do not keep the node, pool and other
 	// info available in the vmref type.
-	state.Put("instance_id", vmRef.VmId())
+	state.Put("instance_id", vmr.VmId())
 
 	ui.Say("Starting VM")
-	_, err := client.StartVm(vmRef)
+	_, err = client.StartVm(vmr)
 	if err != nil {
 		err := fmt.Errorf("Error starting VM: %s", err)
 		state.Put("error", err)
@@ -306,8 +273,8 @@ func generateAgentConfig(agent config.Trilean) *proxmox.QemuGuestAgent {
 	}
 }
 
-func generateTags(rawTags string) *[]proxmox.Tag {
-	tags := make([]proxmox.Tag, 0)
+func generateTags(rawTags string) *proxmox.Tags {
+	tags := make(proxmox.Tags, 0)
 	if rawTags == "" {
 		return &tags
 	}
@@ -316,6 +283,16 @@ func generateTags(rawTags string) *[]proxmox.Tag {
 		tags = append(tags, proxmox.Tag(tag))
 	}
 	return &tags
+}
+
+// Boot priority, example: "order=virtio0;ide2;net0", virtio0:Disk0 -> ide0:CDROM -> net0:Network
+func generateBoot(rawBoot string) *proxmox.BootOrder {
+	raws := strings.Split(strings.TrimPrefix(rawBoot, "order="), ";")
+	order := make(proxmox.BootOrder, len(raws))
+	for i := range raws {
+		order[i] = proxmox.BootDevice(raws[i])
+	}
+	return &order
 }
 
 func generateProxmoxNetworkAdapters(nics []NICConfig) (proxmox.QemuNetworkInterfaces, *packersdk.MultiError) {
@@ -827,17 +804,26 @@ func generateProxmoxSerials(serials []string) proxmox.SerialInterfaces {
 	return devs
 }
 
-func generateProxmoxRng0(rng0 rng0Config) proxmox.QemuDevice {
-	dev := make(proxmox.QemuDevice)
-	setDeviceParamIfDefined(dev, "source", rng0.Source)
+func generateProxmoxRng0(rng0 rng0Config) *proxmox.VirtIoRNG {
+	if rng0.Source == "" {
+		return &proxmox.VirtIoRNG{Delete: true}
+	}
+	var source proxmox.EntropySource
+	err := source.Parse(rng0.Source)
+	if err != nil {
+		return &proxmox.VirtIoRNG{Delete: true}
+	}
+
+	dev := proxmox.VirtIoRNG{
+		Source: &source}
 
 	if rng0.MaxBytes >= 0 {
-		dev["max_bytes"] = rng0.MaxBytes
+		dev.Limit = new(uint(rng0.MaxBytes))
 	}
 	if rng0.Period > 0 {
-		dev["period"] = rng0.Period
+		dev.Period = new(time.Second + time.Duration(rng0.Period))
 	}
-	return dev
+	return &dev
 }
 
 func generateProxmoxVga(vga vgaConfig) proxmox.QemuDevice {
@@ -850,21 +836,26 @@ func generateProxmoxVga(vga vgaConfig) proxmox.QemuDevice {
 	return dev
 }
 
-func generateProxmoxEfi(efi efiConfig) proxmox.QemuDevice {
-	dev := make(proxmox.QemuDevice)
-	setDeviceParamIfDefined(dev, "storage", efi.EFIStoragePool)
-	setDeviceParamIfDefined(dev, "efitype", efi.EFIType)
-	setDeviceParamIfDefined(dev, "format", efi.EFIFormat)
-	// efi.PreEnrolledKeys can be false, but we only want to set pre-enrolled-keys=0
-	// when other EFI options are set.
-	if len(dev) > 0 {
-		if efi.PreEnrolledKeys {
-			dev["pre-enrolled-keys"] = "1"
-		} else {
-			dev["pre-enrolled-keys"] = "0"
-		}
+func generateProxmoxEfi(efi efiConfig) *proxmox.EfiDisk {
+	if efi.EFIStoragePool == "" {
+		return &proxmox.EfiDisk{Delete: true}
 	}
-	return dev
+
+	dev := proxmox.EfiDisk{
+		PreEnrolledKeys: new(efi.PreEnrolledKeys),
+		Storage:         new(proxmox.StorageName(efi.EFIStoragePool)),
+	}
+
+	switch efi.EFIType {
+	case "2m":
+		dev.Type = new(proxmox.EfiDiskType2M)
+	case "4m":
+		dev.Type = new(proxmox.EfiDiskType4M)
+	}
+	if efi.EFIFormat != "" {
+		dev.Format = new(proxmox.QemuDiskFormat(efi.EFIFormat))
+	}
+	return &dev
 }
 
 func generateProxmoxTpm(tpm tpmConfig) *proxmox.TpmState {

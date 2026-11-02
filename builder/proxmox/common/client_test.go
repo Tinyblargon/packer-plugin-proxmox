@@ -40,7 +40,7 @@ func TestTokenAuth(t *testing.T) {
 
 	ref := proxmox.NewVmRef(110)
 	ref.SetNode("node1")
-	ref.SetVmType("qemu")
+	ref.SetVmType(proxmox.GuestQemu)
 	err = client.Sendkey(ctx, ref, "ping")
 	require.NoError(t, err)
 }
@@ -90,7 +90,7 @@ func TestLogin(t *testing.T) {
 
 	ref := proxmox.NewVmRef(110)
 	ref.SetNode("node1")
-	ref.SetVmType("qemu")
+	ref.SetVmType(proxmox.GuestQemu)
 	err = client.Sendkey(ctx, ref, "ping")
 	require.NoError(t, err)
 }
