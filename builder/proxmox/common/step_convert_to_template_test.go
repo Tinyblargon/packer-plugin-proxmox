@@ -76,7 +76,7 @@ func TestConvertToTemplate(t *testing.T) {
 		},
 	}
 
-	const vmid = 123
+	const vmid proxmox.GuestID = 123
 
 	for _, c := range cs {
 		t.Run(c.name, func(t *testing.T) {
